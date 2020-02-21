@@ -45,7 +45,6 @@ namespace QuantConnect.Lean.Engine.Results
     {
         // Required properties for the cloud app.
         private LiveNodePacket _job;
-        private readonly ConcurrentQueue<OrderEvent> _orderEvents;
 
         //Update loop:
         private DateTime _nextUpdate;
@@ -61,7 +60,6 @@ namespace QuantConnect.Lean.Engine.Results
         private DateTime _nextSample;
         private IApi _api;
         private readonly CancellationTokenSource _cancellationTokenSource;
-        private readonly bool _debugMode;
         private readonly int _streamedChartLimit;
         private readonly int _streamedChartGroupSize;
 
@@ -102,7 +100,6 @@ namespace QuantConnect.Lean.Engine.Results
         public LiveTradingResultHandler()
         {
             _statusUpdateLock = new object();
-            _orderEvents = new ConcurrentQueue<OrderEvent>();
             _cancellationTokenSource = new CancellationTokenSource();
             Messages = new ConcurrentQueue<Packet>();
             Charts = new ConcurrentDictionary<string, Chart>();
@@ -110,7 +107,6 @@ namespace QuantConnect.Lean.Engine.Results
             ResamplePeriod = TimeSpan.FromSeconds(2);
             NotificationPeriod = TimeSpan.FromSeconds(1);
             SetNextStatusUpdate();
-            _debugMode = Config.GetBool("debug-mode");
             _streamedChartLimit = Config.GetInt("streamed-chart-limit", 12);
             _streamedChartGroupSize = Config.GetInt("streamed-chart-group-size", 3);
         }
@@ -189,14 +185,17 @@ namespace QuantConnect.Lean.Engine.Results
                 try
                 {
                     //Extract the orders created since last update
-                    OrderEvent orderEvent;
                     var deltaOrders = new Dictionary<int, Order>();
+                    var deltaOrderEvents = GetOrderEventsDelta();
 
                     var stopwatch = Stopwatch.StartNew();
-                    while (_orderEvents.TryDequeue(out orderEvent) && stopwatch.ElapsedMilliseconds < 15)
+                    var index = 0;
+                    while (index < deltaOrderEvents.Count && stopwatch.ElapsedMilliseconds < 15)
                     {
+                        var orderEvent = deltaOrderEvents[index];
                         var order = Algorithm.Transactions.GetOrderById(orderEvent.OrderId);
                         deltaOrders[orderEvent.OrderId] = order.Clone();
+                        index++;
                     }
 
                     //For charting convert to UTC
@@ -274,7 +273,7 @@ namespace QuantConnect.Lean.Engine.Results
 
                     // since we're sending multiple packets, let's do it async and forget about it
                     // chart data can get big so let's break them up into groups
-                    var splitPackets = SplitPackets(deltaCharts, deltaOrders, holdings, Algorithm.Portfolio.CashBook, deltaStatistics, runtimeStatistics, serverStatistics);
+                    var splitPackets = SplitPackets(deltaCharts, deltaOrders, deltaOrderEvents, holdings, Algorithm.Portfolio.CashBook, deltaStatistics, runtimeStatistics, serverStatistics);
 
                     foreach (var liveResultPacket in splitPackets)
                     {
@@ -296,8 +295,24 @@ namespace QuantConnect.Lean.Engine.Results
                             }
                         }
                         var orders = new Dictionary<int, Order>(TransactionHandler.Orders);
-                        var complete = new LiveResultPacket(_job, new LiveResult(chartComplete, orders, Algorithm.Transactions.TransactionRecord, holdings, Algorithm.Portfolio.CashBook, deltaStatistics, runtimeStatistics, serverStatistics));
-                        StoreResult(complete);
+                        var complete = new LiveResultPacket(_job,
+                            new LiveResult(chartComplete,
+                                orders,
+                                Algorithm.Transactions.TransactionRecord,
+                                holdings,
+                                Algorithm.Portfolio.CashBook,
+                                deltaStatistics,
+                                runtimeStatistics,
+                                null,
+                                serverStatistics));
+
+                        lock (StoringLock)
+                        {
+                            if (!ProcessingFinalPacket)
+                            {
+                                StoreResult(complete);
+                            }
+                        }
                         _nextChartsUpdate = DateTime.UtcNow.AddMinutes(1);
                         Log.Debug("LiveTradingResultHandler.Update(): End-store result");
                     }
@@ -437,6 +452,7 @@ namespace QuantConnect.Lean.Engine.Results
                         Algorithm.Portfolio.CashBook,
                         statistics: statistics.Summary,
                         runtime: runtimeStatistics,
+                        orderEvents: null,
                         serverStatistics: serverStatistics)
                     {
                         AlphaRuntimeStatistics = AlphaRuntimeStatistics
@@ -458,6 +474,7 @@ namespace QuantConnect.Lean.Engine.Results
         /// </summary>
         private IEnumerable<LiveResultPacket> SplitPackets(Dictionary<string, Chart> deltaCharts,
             Dictionary<int, Order> deltaOrders,
+            List<OrderEvent> deltaOrderEvents,
             Dictionary<string, Holding> holdings,
             CashBook cashbook,
             Dictionary<string, string> deltaStatistics,
@@ -501,7 +518,7 @@ namespace QuantConnect.Lean.Engine.Results
             // these are easier to split up, not as big as the chart objects
             var packets = new[]
             {
-                new LiveResultPacket(_job, new LiveResult { Orders = deltaOrders}),
+                new LiveResultPacket(_job, new LiveResult { Orders = deltaOrders, OrderEvents = deltaOrderEvents}),
                 new LiveResultPacket(_job, new LiveResult { Holdings = holdings, Cash = cashbook}),
                 new LiveResultPacket(_job, new LiveResult
                 {
@@ -772,50 +789,54 @@ namespace QuantConnect.Lean.Engine.Results
         /// </summary>
         public void SendFinalResult()
         {
-            Log.Trace("LiveTradingResultHandler.SendFinalResult(): Starting...");
-            try
+            lock (StoringLock)
             {
-                //Convert local dictionary:
-                var charts = new Dictionary<string, Chart>();
-                lock (ChartLock)
+                ProcessingFinalPacket = true;
+                Log.Trace("LiveTradingResultHandler.SendFinalResult(): Starting...");
+                try
                 {
-                    foreach (var kvp in Charts)
+                    //Convert local dictionary:
+                    var charts = new Dictionary<string, Chart>();
+                    lock (ChartLock)
                     {
-                        charts.Add(kvp.Key, kvp.Value.Clone());
+                        foreach (var kvp in Charts)
+                        {
+                            charts.Add(kvp.Key, kvp.Value.Clone());
+                        }
                     }
+
+                    var orders = new Dictionary<int, Order>(TransactionHandler.Orders);
+                    var profitLoss = new SortedDictionary<DateTime, decimal>(Algorithm.Transactions.TransactionRecord);
+                    var holdings = new Dictionary<string, Holding>();
+                    var statisticsResults = GenerateStatisticsResults(charts, profitLoss);
+                    var runtime = GetAlgorithmRuntimeStatistics(statisticsResults.Summary);
+
+                    StoreStatusFile(runtime, holdings, charts, profitLoss, statistics: statisticsResults);
+
+                    //Create a packet:
+                    var result = new LiveResultPacket(_job,
+                        new LiveResult(charts, orders, profitLoss, holdings, Algorithm.Portfolio.CashBook, statisticsResults.Summary, runtime, OrderEvents.ToList()))
+                    {
+                        ProcessingTime = (DateTime.UtcNow - StartTime).TotalSeconds
+                    };
+
+                    //Save the processing time:
+
+                    //Store to S3:
+                    StoreResult(result, false);
+                    Log.Trace("LiveTradingResultHandler.SendFinalResult(): Finished storing results. Start sending...");
+                    //Truncate packet to fit within 32kb:
+                    result.Results = new LiveResult();
+
+                    //Send the truncated packet:
+                    MessagingHandler.Send(result);
                 }
-
-                var orders = new Dictionary<int, Order>(TransactionHandler.Orders);
-                var profitLoss = new SortedDictionary<DateTime, decimal>(Algorithm.Transactions.TransactionRecord);
-                var holdings = new Dictionary<string, Holding>();
-                var statisticsResults = GenerateStatisticsResults(charts, profitLoss);
-                var runtime = GetAlgorithmRuntimeStatistics(statisticsResults.Summary);
-
-                StoreStatusFile(runtime, holdings, charts, profitLoss, statistics: statisticsResults);
-
-                //Create a packet:
-                var result = new LiveResultPacket(_job,
-                    new LiveResult(charts, orders, profitLoss, holdings, Algorithm.Portfolio.CashBook, statisticsResults.Summary, runtime))
+                catch (Exception err)
                 {
-                    ProcessingTime = (DateTime.UtcNow - StartTime).TotalSeconds
-                };
-
-                //Save the processing time:
-
-                //Store to S3:
-                StoreResult(result, false);
-                Log.Trace("LiveTradingResultHandler.SendFinalResult(): Finished storing results. Start sending...");
-                //Truncate packet to fit within 32kb:
-                result.Results = new LiveResult();
-
-                //Send the truncated packet:
-                MessagingHandler.Send(result);
+                    Log.Error(err);
+                }
+                Log.Trace("LiveTradingResultHandler.SendFinalResult(): Ended");
             }
-            catch (Exception err)
-            {
-                Log.Error(err);
-            }
-            Log.Trace("LiveTradingResultHandler.SendFinalResult(): Ended");
         }
 
         /// <summary>
@@ -921,17 +942,15 @@ namespace QuantConnect.Lean.Engine.Results
         }
 
         /// <summary>
-        /// New order event for the algorithm backtest: send event to browser.
+        /// New order event for the algorithm
         /// </summary>
         /// <param name="newEvent">New event details</param>
-        public void OrderEvent(OrderEvent newEvent)
+        public override void OrderEvent(OrderEvent newEvent)
         {
-            // we'll pull these out for the deltaOrders
-            _orderEvents.Enqueue(newEvent);
+            base.OrderEvent(newEvent);
 
             //Send the message to frontend as packet:
             Log.Trace("LiveTradingResultHandler.OrderEvent(): " + newEvent, true);
-            Messages.Enqueue(new OrderEventPacket(JobId, newEvent));
 
             var message = "New Order Event: " + newEvent;
             DebugMessage(message);
