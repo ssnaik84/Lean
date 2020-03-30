@@ -1,0 +1,22 @@
+﻿-- uptrend / positive
+
+select top 100 RegularMarketTime t, RegularMarketOpen o, RegularMarketPrice c, RegularMarketChangePercent, PostMarketChangePercent, * from usasecurity
+where RegularMarketOpen < RegularMarketPrice
+order by (MarketCap / 1000 * RegularMarketVolume / 1000 * RegularMarketPrice) desc, RegularMarketTime desc
+
+
+select top 100 * from usastockeod e1
+join usastockeod e2 on e1.Symbol = e2.Symbol
+where e1.[DateTime] = '2020-03-27' and e2.[DateTime] = '2020-03-26'
+and e1.[Close] > e2.[Close] --positive
+and e1.[Close] > e1.[Open] --positive
+and e2.[Close] > e2.[Open] --positive
+and e1.[Close] < 20
+order by e1.[Close] * e1.Volume desc
+
+
+-- down trend / negative
+
+select top 100 RegularMarketTime t, RegularMarketOpen o, RegularMarketPrice c, RegularMarketChangePercent, PostMarketChangePercent, * from usasecurity
+where RegularMarketOpen > RegularMarketPrice
+order by (MarketCap / 1000 * RegularMarketVolume / 1000 * RegularMarketPrice) desc, RegularMarketTime desc
