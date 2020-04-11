@@ -32,6 +32,7 @@
             this.txtStocks = new System.Windows.Forms.TextBox();
             this.btnShowChart = new System.Windows.Forms.Button();
             this.btnSaveEODData = new System.Windows.Forms.Button();
+            this.btnReadTweets = new System.Windows.Forms.Button();
             this.SuspendLayout();
             // 
             // btnSaveHistoricalData
@@ -56,7 +57,7 @@
             // 
             this.btnShowChart.Location = new System.Drawing.Point(518, 261);
             this.btnShowChart.Name = "btnShowChart";
-            this.btnShowChart.Size = new System.Drawing.Size(190, 23);
+            this.btnShowChart.Size = new System.Drawing.Size(190, 42);
             this.btnShowChart.TabIndex = 2;
             this.btnShowChart.Text = "Show Charts";
             this.btnShowChart.UseVisualStyleBackColor = true;
@@ -72,11 +73,22 @@
             this.btnSaveEODData.UseVisualStyleBackColor = true;
             this.btnSaveEODData.Click += new System.EventHandler(this.btnSaveEODData_Click);
             // 
+            // btnReadTweets
+            // 
+            this.btnReadTweets.Location = new System.Drawing.Point(262, 261);
+            this.btnReadTweets.Name = "btnReadTweets";
+            this.btnReadTweets.Size = new System.Drawing.Size(172, 42);
+            this.btnReadTweets.TabIndex = 4;
+            this.btnReadTweets.Text = "Read Tweets";
+            this.btnReadTweets.UseVisualStyleBackColor = true;
+            this.btnReadTweets.Click += new System.EventHandler(this.btnReadTweets_Click);
+            // 
             // Form1
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(8F, 16F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.ClientSize = new System.Drawing.Size(800, 450);
+            this.Controls.Add(this.btnReadTweets);
             this.Controls.Add(this.btnSaveEODData);
             this.Controls.Add(this.btnShowChart);
             this.Controls.Add(this.txtStocks);
@@ -94,6 +106,7 @@
         private System.Windows.Forms.TextBox txtStocks;
         private System.Windows.Forms.Button btnShowChart;
         private System.Windows.Forms.Button btnSaveEODData;
+        private System.Windows.Forms.Button btnReadTweets;
     }
 }
 

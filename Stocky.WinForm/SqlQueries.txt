@@ -1,5 +1,13 @@
 ﻿-- uptrend / positive
 
+select top 100 * from usastockeod e1
+join usastockeod e2 on e1.Symbol = e2.Symbol
+where e1.[DateTime] = '2020-03-31' and e2.[DateTime] = '2020-03-30' 
+and e1.[Close] > e1.[Open] and e1.[Open] < e2.[Close] and e1.[Close] > e2.[Open] -- +ve
+and e2.[Close] < e2.[Open] -- -ve
+and e1.[Close] between 5 and 50
+order by e1.[Close] * e1.Volume desc
+
 select top 100 RegularMarketTime t, RegularMarketOpen o, RegularMarketPrice c, RegularMarketChangePercent, PostMarketChangePercent, * from usasecurity
 where RegularMarketOpen < RegularMarketPrice
 order by (MarketCap / 1000 * RegularMarketVolume / 1000 * RegularMarketPrice) desc, RegularMarketTime desc
@@ -14,9 +22,53 @@ and e2.[Close] > e2.[Open] --positive
 and e1.[Close] < 20
 order by e1.[Close] * e1.Volume desc
 
+select top 100 * from usastockeod e1
+join usastockeod e2 on e1.Symbol = e2.Symbol
+join usastockeod e3 on e1.Symbol = e3.Symbol
+where e1.[DateTime] = '2020-03-30' and e2.[DateTime] = '2020-03-27'  and e3.[DateTime] = '2020-03-26'
+and e1.[Close] > e2.[Close] and e1.[Close] > e1.[Open] --positive
+and e2.[Close] > e2.[Open] --positive
+and e3.[Close] < e3.[Open] --negative
+--and e1.[Close] < 20
+order by e1.[Close] * e1.Volume desc
+
+
+select top 100 * from usastockeod e1
+where e1.[DateTime] = '2020-04-01'
+and e1.[Close] > e1.[Open]
+and e1.[Close] between 5 and 50
+order by e1.[Close] * e1.Volume desc
+
 
 -- down trend / negative
 
 select top 100 RegularMarketTime t, RegularMarketOpen o, RegularMarketPrice c, RegularMarketChangePercent, PostMarketChangePercent, * from usasecurity
 where RegularMarketOpen > RegularMarketPrice
 order by (MarketCap / 1000 * RegularMarketVolume / 1000 * RegularMarketPrice) desc, RegularMarketTime desc
+
+
+select top 100 * from usastockeod e1
+join usastockeod e2 on e1.Symbol = e2.Symbol
+where e1.[DateTime] = '2020-03-31' and e2.[DateTime] = '2020-03-30' 
+and e1.[Close] < e1.[Open] and e1.[Open] > e2.[Close] and e1.[Close] < e2.[Open] -- +ve
+and e2.[Close] > e2.[Open] -- -ve
+and e1.[Close] between 5 and 50
+order by e1.[Close] * e1.Volume desc
+
+
+select top 100 * from usastockeod e1
+join usastockeod e2 on e1.Symbol = e2.Symbol
+JOIN usastock s on s.SYMBOL = e1.Symbol
+where e1.[DateTime] = '2020-04-02' and e2.[DateTime] = '2020-04-01' 
+and e1.[Close] < e1.[Open] --and e1.[Open] < e2.[Close] and e1.[Close] > e2.[Open] -- +ve
+and e2.[Close] < e2.[Open] -- -ve
+--and e1.[Close] between 5 and 50
+and s.iswatchlisted = 1
+order by e1.[Close] * e1.Volume desc
+
+-------------------------------------------------------------------
+update usastock set iswatchlisted =1
+where SYMBOL in 
+('v', 'MA', 'MSFT', 'GOOGL', 'DIS','AAL','AAPL', 'ABT', 'CVS', 'C', 'JPM', 'JNJ', 'COST', 'WMT' , 'KR', 'NFLX' ,'TSLA', 'BABA', 'DOCU', 'UBER', 'LYFT', 'FB','MCD',
+'INTC', 'ADP', 'SQ', 'DFS' , 'WDAY','ROKU' , 'GLW', 'NVDA', 'QCOM', 'AMD', 'XLNX', 'VMW', 'PYPL', 'TMUS' ,'T', 'VZ', 'PFE', 'BYND', 'BAC', 'PRI', 'BRK.B', 'INO', 
+'DGX' ,'HRC', 'TRIP', 'UAL', 'HOG', 'F', 'GE', 'ECH', 'PRMW', 'Z', 'CAR', 'HTZ', 'STAY', 'PLCE', 'AYTU', 'COST', 'MMM', 'GILD','BA') 

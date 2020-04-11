@@ -46,5 +46,10 @@ namespace Stocky.WinForm
         {
             EodData.DownloadEodAsync();
         }
+
+        private void btnReadTweets_Click(object sender, EventArgs e)
+        {
+            txtStocks.Text = EodData.GetUserTimeLine();
+        }
     }
 }
