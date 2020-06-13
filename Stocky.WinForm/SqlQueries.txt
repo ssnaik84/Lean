@@ -1,4 +1,165 @@
-﻿-- uptrend / positive
+﻿CREATE TABLE [dbo].[usastockeod](
+	[Symbol] [nvarchar](10) NOT NULL,
+	[DateTime] [datetime] NOT NULL,
+	[Open] [decimal](18, 2) NULL,
+	[High] [decimal](18, 2) NULL,
+	[Low] [decimal](18, 2) NULL,
+	[Close] [decimal](18, 2) NULL,
+	[Volume] [decimal](18, 0) NULL,
+	[AdjustedClose] [decimal](18, 2) NULL,
+ CONSTRAINT [PK_candle] PRIMARY KEY CLUSTERED 
+(
+	[Symbol] ASC,
+	[DateTime] ASC
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
+) ON [PRIMARY]
+GO
+
+-- very important function
+
+USE [StockScreener]
+GO
+/****** Object:  UserDefinedFunction [dbo].[fngetstockdata]    Script Date: 6/11/2020 12:31:35 AM ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+--use stockscreener
+ALTER FUNCTION [dbo].[fngetstockdata](
+@date1 as datetime,
+@date2 as datetime,
+@date3 as datetime,
+@minval as int,
+@maxval as int,
+@isPostive as bit
+
+)
+RETURNS  @rtnTable TABLE 
+(
+    -- columns returned by the function    
+    symbol nvarchar(10) NULL,
+	pricevol decimal(18,2)
+)
+AS
+BEGIN
+
+--insert into @rtnTable (symbol, pricevol)
+--select top 25 e1.Symbol, e1.[Close] * e1.Volume from usastockeod e1
+--where e1.[DateTime] = @date1
+--and e1.[Close] > e1.[Open]
+--and e1.[Close] between @minval and @maxval
+--order by e1.[Close] * e1.Volume desc
+
+insert into @rtnTable (symbol, pricevol)
+select top 100 e1.Symbol, e1.[Close] * e1.Volume from usastockeod e1
+join usastockeod e2 on e1.Symbol = e2.Symbol
+join usastockeod e3 on e1.Symbol = e3.Symbol
+--join usastockeod e4 on e1.Symbol = e4.Symbol
+where e1.[DateTime] = @date1 and e2.[DateTime] = @date2 and e3.[DateTime] = @date3 --and e4.[DateTime] = '2020-04-09' --and e4.[DateTime] = '2020-04-07'
+and e1.[Close] < e1.[Open] --and e1.[Open] < e2.[Close] and e1.[Close] > e2.[Open] -- +ve
+and e2.[Close] < e2.[Open] -- -ve
+and e1.[Close] < e2.[Close] -- -ve
+--and e1.[Close] > e2.[Close]  -- +ve
+and e3.[Close] > e3.[Open]
+--and e4.[Close] > e4.[Open]
+and e1.[Close] between @minval and @maxval
+--and s.iswatchlisted = 1
+order by e1.[Close] * e1.Volume desc
+
+
+--USE [StockScreener]
+--declare @result TABLE 
+--	(
+--		symbol nvarchar(10) NULL,
+--		pricevol decimal(18,2)
+--	)
+--declare @min int, @max int;
+--DECLARE @cnt INT = 1;
+
+--WHILE @cnt < 50
+--BEGIN
+--	set @min = @cnt;
+--	set @max = @cnt + 3;
+    
+--	insert into @result
+--	select * from dbo.fngetstockdata('2020-06-10','2020-06-09','2020-06-08',@min,@max, 1 )
+
+--	--increment counter
+--	SET @cnt = @max;
+--END;
+
+--select top 100 * from @result
+--order by pricevol desc
+
+return
+END
+
+--------------------------------------------------------------------------------------------------
+
+
+use stockscreener
+--select count(datetime) from usastockeod
+select top 100 * from usastockeod e1
+join usastockeod e2 on e1.Symbol = e2.Symbol
+join usastockeod e3 on e1.Symbol = e3.Symbol
+join usastockeod e4 on e1.Symbol = e4.Symbol
+--JOIN usastock s on s.SYMBOL = e1.Symbol
+where e1.[DateTime] = '2020-04-13' and e2.[DateTime] = '2020-04-09' and e3.[DateTime] = '2020-04-08' and e4.[DateTime] = '2020-04-07'
+and e1.[Close] > e1.[Open] --and e1.[Open] < e2.[Close] and e1.[Close] > e2.[Open] -- +ve
+and e2.[Close] < e2.[Open] -- -ve
+and e3.[Close] < e3.[Open]
+and e4.[Close] < e4.[Open]
+--and e1.[Close] between 5 and 50
+--and s.iswatchlisted = 1
+order by e1.[Close] * e1.Volume desc
+
+
+
+use stockscreener
+--select * from usastock
+--where iswatchlisted = 1
+--select max(datetime) from usastockeod
+--select count(datetime) from usastockeod
+select top 100 * from usastockeod e1
+join usastockeod e2 on e1.Symbol = e2.Symbol
+--join usastockeod e3 on e1.Symbol = e3.Symbol
+--join usastockeod e4 on e1.Symbol = e4.Symbol
+--JOIN usastock s on s.SYMBOL = e1.Symbol
+where e1.[DateTime] = '2020-04-20' and e2.[DateTime] = '2020-04-17' --and e3.[DateTime] = '2020-04-13' and e4.[DateTime] = '2020-04-09' --and e4.[DateTime] = '2020-04-07'
+and e1.[Close] < e1.[Open] --and e1.[Open] < e2.[Close] and e1.[Close] > e2.[Open] -- +ve
+and e2.[Close] < e2.[Open] -- -ve
+and e1.[Close] < e2.[Close] --and e1.[Open] > e2.[Open]
+--and e3.[Close] > e3.[Open]
+--and e4.[Close] > e4.[Open]
+--and e1.[Close] between 5 and 50
+--and s.iswatchlisted = 1
+order by e1.[Close] * e1.Volume desc
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+==============================================================================================
+
+-- uptrend / positive
 
 select top 100 * from usastockeod e1
 join usastockeod e2 on e1.Symbol = e2.Symbol
