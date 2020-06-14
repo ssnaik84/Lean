@@ -1,4 +1,17 @@
-﻿CREATE TABLE [dbo].[usastockeod](
+﻿STEPS: To forward merge parent branch: https://github.com/QuantConnect/Lean.git
+=====================================
+git remote add upstream https://github.com/QuantConnect/Lean.git
+git fetch upstream
+git pull upstream master
+
+then, resolve conflicts, if exists.
+git push
+===================================================
+
+
+
+
+CREATE TABLE [dbo].[usastockeod](
 	[Symbol] [nvarchar](10) NOT NULL,
 	[DateTime] [datetime] NOT NULL,
 	[Open] [decimal](18, 2) NULL,
@@ -16,6 +29,7 @@
 GO
 
 -- very important function
+===================================================
 
 USE [StockScreener]
 GO
