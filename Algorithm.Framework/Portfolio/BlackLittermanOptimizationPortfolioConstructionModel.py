@@ -45,7 +45,7 @@ from numpy.linalg import inv
 ### </summary>
 class BlackLittermanOptimizationPortfolioConstructionModel(PortfolioConstructionModel):
     def __init__(self,
-                 rebalancingParam = Resolution.Daily,
+                 rebalance = Resolution.Daily,
                  portfolioBias = PortfolioBias.LongShort,
                  lookback = 1,
                  period = 63,
@@ -56,7 +56,7 @@ class BlackLittermanOptimizationPortfolioConstructionModel(PortfolioConstruction
                  optimizer = None):
         """Initialize the model
         Args:
-            rebalancingParam: Rebalancing parameter. If it is a timedelta, date rules or Resolution, it will be converted into a function.
+            rebalance: Rebalancing parameter. If it is a timedelta, date rules or Resolution, it will be converted into a function.
                               If None will be ignored.
                               The function returns the next expected rebalance time for a given algorithm UTC DateTime.
                               The function returns null if unknown, in which case the function will be called again in the
@@ -85,11 +85,11 @@ class BlackLittermanOptimizationPortfolioConstructionModel(PortfolioConstruction
 
         # If the argument is an instance of Resolution or Timedelta
         # Redefine rebalancingFunc
-        rebalancingFunc = rebalancingParam
-        if isinstance(rebalancingParam, int):
-            rebalancingParam = Extensions.ToTimeSpan(rebalancingParam)
-        if isinstance(rebalancingParam, timedelta):
-            rebalancingFunc = lambda dt: dt + rebalancingParam
+        rebalancingFunc = rebalance
+        if isinstance(rebalance, int):
+            rebalance = Extensions.ToTimeSpan(rebalance)
+        if isinstance(rebalance, timedelta):
+            rebalancingFunc = lambda dt: dt + rebalance
         if rebalancingFunc:
             self.SetRebalancingFunc(rebalancingFunc)
 
@@ -109,9 +109,9 @@ class BlackLittermanOptimizationPortfolioConstructionModel(PortfolioConstruction
                 symbol = insight.Symbol
                 symbolData = self.symbolDataBySymbol.get(symbol, self.BlackLittermanSymbolData(symbol, self.lookback, self.period))
                 if insight.Magnitude is None:
-                    self.Algorithm.SetRunTimeError(ArgumentNullExceptionArgumentNullException('BlackLittermanOptimizationPortfolioConstructionModel does not accept \'None\' as Insight.Magnitude. Please make sure your Alpha Model is generating Insights with the Magnitude property set.'))
+                    self.Algorithm.SetRunTimeError(ArgumentNullException('BlackLittermanOptimizationPortfolioConstructionModel does not accept \'None\' as Insight.Magnitude. Please make sure your Alpha Model is generating Insights with the Magnitude property set.'))
                     return targets
-                symbolData.Add(self.Algorithm.Time, insight.Magnitude)
+                symbolData.Add(insight.GeneratedTimeUtc, insight.Magnitude)
                 returns[symbol] = symbolData.Return
 
             returns = pd.DataFrame(returns)
@@ -164,20 +164,23 @@ class BlackLittermanOptimizationPortfolioConstructionModel(PortfolioConstruction
                 symbolData.Reset()
 
         # initialize data for added securities
-        addedSymbols = [ x.Symbol for x in changes.AddedSecurities ]
-        history = algorithm.History(addedSymbols, self.lookback * self.period, self.resolution)
+        addedSymbols = { x.Symbol: x.Exchange.TimeZone for x in changes.AddedSecurities }
+        history = algorithm.History(list(addedSymbols.keys()), self.lookback * self.period, self.resolution)
 
-        for symbol in addedSymbols:
-            symbolData = self.BlackLittermanSymbolData(symbol, self.lookback, self.period)
+        if history.empty:
+            return
 
-            if not history.empty:
-                ticker = SymbolCache.GetTicker(symbol)
+        history = history.close.unstack(0)
+        symbols = history.columns
 
-                if ticker not in history.index.levels[0]:
-                    Log.Trace(f'BlackLittermanOptimizationPortfolioConstructionModel.OnSecuritiesChanged: {ticker} not found in history data frame.')
-                    continue
+        for symbol, timezone in addedSymbols.items():
+            if str(symbol) not in symbols:
+                continue
 
-                symbolData.WarmUpIndicators(history.loc[ticker])
+            symbolData = self.symbolDataBySymbol.get(symbol, self.BlackLittermanSymbolData(symbol, self.lookback, self.period))
+            for time, close in history[symbol].items():
+                utcTime = Extensions.ConvertToUtc(time, timezone)
+                symbolData.Update(utcTime, close)
 
             self.symbolDataBySymbol[symbol] = symbolData
 
@@ -292,22 +295,24 @@ class BlackLittermanOptimizationPortfolioConstructionModel(PortfolioConstruction
             self.roc.Reset()
             self.window.Reset()
 
-        def WarmUpIndicators(self, history):
-            for tuple in history.itertuples():
-                self.roc.Update(tuple.Index, tuple.close)
+        def Update(self, utcTime, close):
+            self.roc.Update(utcTime, close)
 
         def OnRateOfChangeUpdated(self, roc, value):
             if roc.IsReady:
                 self.window.Add(value)
 
         def Add(self, time, value):
+            if self.window.Samples > 0 and self.window[0].EndTime == time:
+                return;
+
             item = IndicatorDataPoint(self.symbol, time, value)
             self.window.Add(item)
 
         @property
         def Return(self):
             return pd.Series(
-                data = [float(x.Value) for x in self.window],
+                data = [x.Value for x in self.window],
                 index = [x.EndTime for x in self.window])
 
         @property
@@ -315,4 +320,4 @@ class BlackLittermanOptimizationPortfolioConstructionModel(PortfolioConstruction
             return self.window.IsReady
 
         def __str__(self, **kwargs):
-            return '{}: {:.2%}'.format(self.roc.Name, (1 + self.window[0])**252 - 1)
+            return f'{self.roc.Name}: {(1 + self.window[0])**252 - 1:.2%}'

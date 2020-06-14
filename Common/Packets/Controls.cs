@@ -14,6 +14,8 @@
  *
 */
 
+using System.Collections.Generic;
+using System.IO;
 using Newtonsoft.Json;
 using QuantConnect.Interfaces;
 
@@ -43,10 +45,16 @@ namespace QuantConnect.Packets
         public int TickLimit;
 
         /// <summary>
-        /// Ram allocation for this backtest in MB
+        /// Ram allocation for this algorithm in MB
         /// </summary>
-        [JsonProperty(PropertyName = "iRamAllocation")]
+        [JsonProperty(PropertyName = "iMaxRamAllocation")]
         public int RamAllocation;
+
+        /// <summary>
+        /// CPU allocation for this algorithm
+        /// </summary>
+        [JsonProperty(PropertyName = "dMaxCpuAllocation")]
+        public decimal CpuAllocation;
 
         /// <summary>
         /// The user backtesting log limit
@@ -110,11 +118,23 @@ namespace QuantConnect.Packets
         public int StorageFileCount;
 
         /// <summary>
+        /// Holds the permissions for the object store
+        /// </summary>
+        [JsonProperty(PropertyName = "storagePermissions")]
+        public FileAccess StoragePermissions;
+
+        /// <summary>
         /// The interval over which the <see cref="IObjectStore"/> will persistence the contents of
         /// the object store
         /// </summary>
         [JsonProperty(PropertyName = "persistenceIntervalSeconds")]
         public int PersistenceIntervalSeconds;
+
+        /// <summary>
+        /// Gets list of streaming data permissions
+        /// </summary>
+        [JsonProperty(PropertyName = "streamingDataPermissions")]
+        public HashSet<string> StreamingDataPermissions;
 
         /// <summary>
         /// Initializes a new default instance of the <see cref="Controls"/> class
@@ -135,9 +155,12 @@ namespace QuantConnect.Packets
             StorageLimitMB = 5;
             StorageFileCount = 100;
             PersistenceIntervalSeconds = 5;
+            StoragePermissions = FileAccess.ReadWrite;
 
             // initialize to default leaky bucket values in case they're not specified
             TrainingLimits = new LeakyBucketControlParameters();
+
+            StreamingDataPermissions = new HashSet<string>();
         }
 
         /// <summary>

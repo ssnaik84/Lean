@@ -18,7 +18,6 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Globalization;
-using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -50,29 +49,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
     [BrokerageFactory(typeof(InteractiveBrokersBrokerageFactory))]
     public sealed class InteractiveBrokersBrokerage : Brokerage, IDataQueueHandler, IDataQueueUniverseProvider
     {
-        private enum Region { America, Europe, Asia }
-
-        // Source: https://ibkr.info/article/2816
-        private readonly Dictionary<string, Region> _ibServerMap = new Dictionary<string, Region>
-        {
-            { "gdc1.ibllc.com", Region.America },
-            { "ndc1.ibllc.com", Region.America },
-            { "ndc1_hb1.ibllc.com", Region.America },
-            { "cdc1.ibllc.com", Region.America },
-            { "cdc1_hb1.ibllc.com", Region.America },
-
-            { "zdc1.ibllc.com", Region.Europe },
-            { "zdc1_hb1.ibllc.com", Region.Europe },
-
-            { "hdc1.ibllc.com", Region.Asia },
-            { "hdc1_hb1.ibllc.com", Region.Asia },
-            { "mcgw1.ibllc.com.cn", Region.Asia },
-            { "mcgw1_hb1.ibllc.com.cn", Region.Asia }
-        };
-
         private readonly IBAutomater.IBAutomater _ibAutomater;
-        private string _ibServerName;
-        private Region _ibServerRegion = Region.America;
 
         // Existing orders created in TWS can *only* be cancelled/modified when connected with ClientId = 0
         private const int ClientId = 0;
@@ -106,6 +83,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private readonly ManualResetEvent _accountHoldingsResetEvent = new ManualResetEvent(false);
         private Exception _accountHoldingsLastException;
 
+        // tracks requested order updates, so we can flag Submitted order events as updates
+        private readonly ConcurrentDictionary<int, int> _orderUpdates = new ConcurrentDictionary<int, int>();
         // tracks executions before commission reports, map: execId -> execution
         private readonly ConcurrentDictionary<string, Execution> _orderExecutions = new ConcurrentDictionary<string, Execution>();
         // tracks commission reports before executions, map: execId -> commission report
@@ -126,21 +105,21 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         // Prioritized list of exchanges used to find right futures contract
         private readonly Dictionary<string, string> _futuresExchanges = new Dictionary< string, string>
         {
-            { Market.Globex, "GLOBEX" },
+            { Market.CME, "GLOBEX" },
             { Market.NYMEX, "NYMEX" },
+            { Market.COMEX, "NYMEX" },
             { Market.CBOT, "ECBOT" },
             { Market.ICE, "NYBOT" },
             { Market.CBOE, "CFE" }
         };
+
+        private readonly SymbolPropertiesDatabase _symbolPropertiesDatabase = SymbolPropertiesDatabase.FromDataFolder();
 
         // exchange time zones by symbol
         private readonly Dictionary<Symbol, DateTimeZone> _symbolExchangeTimeZones = new Dictionary<Symbol, DateTimeZone>();
 
         // IB requests made through the IB-API must be limited to a maximum of 50 messages/second
         private readonly RateGate _messagingRateLimiter = new RateGate(50, TimeSpan.FromSeconds(1));
-
-        // used to limit logging
-        private bool _isWithinScheduledServerResetTimesLastValue;
 
         // additional IB request information, will be matched with errors in the handler, for better error reporting
         private readonly ConcurrentDictionary<int, string> _requestInformation = new ConcurrentDictionary<int, string>();
@@ -375,11 +354,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             try
             {
                 Log.Trace("InteractiveBrokersBrokerage.UpdateOrder(): Symbol: " + order.Symbol.Value + " Quantity: " + order.Quantity + " Status: " + order.Status);
-
+                _orderUpdates[order.Id] = order.Id;
                 IBPlaceOrder(order, false);
             }
             catch (Exception err)
             {
+                int id;
+                _orderUpdates.TryRemove(order.Id, out id);
                 Log.Error("InteractiveBrokersBrokerage.UpdateOrder(): " + err);
                 return false;
             }
@@ -563,7 +544,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         {
             if (!IsConnected)
             {
-                if (IsWithinScheduledServerResetTimes())
+                if (_ibAutomater.IsWithinScheduledServerResetTimes())
                 {
                     // Occasionally the disconnection due to the IB reset period might last
                     // much longer than expected during weekends (even up to the cash sync time).
@@ -782,11 +763,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     // enable detailed logging
                     _client.ClientSocket.setServerLogLevel(5);
 
-                    // load server name and region
-                    LoadIbServerInformation();
-
-                    Log.Trace($"InteractiveBrokersBrokerage.Connect(): ServerName: {_ibServerName}, ServerRegion: {_ibServerRegion}");
-
                     break;
                 }
                 catch (Exception err)
@@ -952,7 +928,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 exchange = Market.CBOE.ToUpperInvariant();
             }
 
-            var contract = CreateContract(order.Symbol, exchange);
+            var contract = CreateContract(order.Symbol, false, exchange);
 
             int ibOrderId;
             if (needsNewId)
@@ -997,7 +973,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             ContractDetails details;
             if (_contractDetails.TryGetValue(GetUniqueKey(contract), out details))
             {
-                return details.Summary.PrimaryExch;
+                return details.Contract.PrimaryExch;
             }
 
             details = GetContractDetails(contract, symbol);
@@ -1007,7 +983,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 return null;
             }
 
-            return details.Summary.PrimaryExch;
+            return details.Contract.PrimaryExch;
         }
 
         private string GetTradingClass(Contract contract, Symbol symbol)
@@ -1015,7 +991,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             ContractDetails details;
             if (_contractDetails.TryGetValue(GetUniqueKey(contract), out details))
             {
-                return details.Summary.TradingClass;
+                return details.Contract.TradingClass;
             }
 
             details = GetContractDetails(contract, symbol);
@@ -1025,7 +1001,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 return null;
             }
 
-            return details.Summary.TradingClass;
+            return details.Contract.TradingClass;
         }
 
         private decimal GetMinTick(Contract contract, Symbol symbol)
@@ -1106,12 +1082,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             // sorting list of available contracts by exchange priority, taking the top 1
             return contractDetails
-                    .Select(details => details.Summary.Exchange)
+                    .Select(details => details.Contract.Exchange)
                     .OrderByDescending(e => Array.IndexOf(exchanges, e))
                     .FirstOrDefault();
         }
 
-        private IEnumerable<ContractDetails> FindContracts(Contract contract, string ticker)
+        public IEnumerable<ContractDetails> FindContracts(Contract contract, string ticker)
         {
             const int timeout = 60; // sec
 
@@ -1188,6 +1164,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             if (_requestInformation.TryGetValue(requestId, out requestMessage))
             {
                 errorMsg += ". Origin: " + requestMessage;
+            }
+
+            // historical data request with no data returned
+            if (errorCode == 162 && errorMsg.Contains("HMDS query returned no data"))
+            {
+                return;
             }
 
             Log.Trace($"InteractiveBrokersBrokerage.HandleError(): RequestId: {requestId} ErrorCode: {errorCode} - {errorMsg}");
@@ -1321,7 +1303,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 return;
             }
 
-            var isResetTime = IsWithinScheduledServerResetTimes();
+            var isResetTime = _ibAutomater.IsWithinScheduledServerResetTimes();
 
             if (!isResetTime)
             {
@@ -1412,15 +1394,19 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     return;
                 }
 
+                int id;
+                // if we get a Submitted status and we had placed an order update, this new event is flagged as an update
+                var isUpdate = status == OrderStatus.Submitted && _orderUpdates.TryRemove(order.Id, out id);
+
                 // IB likes to duplicate/triplicate some events, so we fire non-fill events only if status changed
-                if (status != order.Status)
+                if (status != order.Status || isUpdate)
                 {
                     if (order.Status.IsClosed())
                     {
                         // if the order is already in a closed state, we ignore the event
                         Log.Trace("InteractiveBrokersBrokerage.HandleOrderStatusUpdates(): ignoring update in closed state - order.Status: " + order.Status + ", status: " + status);
                     }
-                    else if (order.Status == OrderStatus.PartiallyFilled && (status == OrderStatus.New || status == OrderStatus.Submitted))
+                    else if (order.Status == OrderStatus.PartiallyFilled && (status == OrderStatus.New || status == OrderStatus.Submitted) && !isUpdate)
                     {
                         // if we receive a New or Submitted event when already partially filled, we ignore it
                         Log.Trace("InteractiveBrokersBrokerage.HandleOrderStatusUpdates(): ignoring status " + status + " after partial fills");
@@ -1430,7 +1416,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         // fire the event
                         OnOrderEvent(new OrderEvent(order, DateTime.UtcNow, OrderFee.Zero, "Interactive Brokers Order Event")
                         {
-                            Status = status
+                            Status = isUpdate ? OrderStatus.UpdateSubmitted : status
                         });
                     }
                 }
@@ -1822,9 +1808,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// Creates an IB contract from the order.
         /// </summary>
         /// <param name="symbol">The symbol whose contract we need to create</param>
+        /// <param name="includeExpired">Include expired contracts</param>
         /// <param name="exchange">The exchange where the order will be placed, defaults to 'Smart'</param>
         /// <returns>A new IB contract for the order</returns>
-        private Contract CreateContract(Symbol symbol, string exchange = null)
+        private Contract CreateContract(Symbol symbol, bool includeExpired, string exchange = null)
         {
             var securityType = ConvertSecurityType(symbol.ID.SecurityType);
             var ibSymbol = _symbolMapper.GetBrokerageSymbol(symbol);
@@ -1856,27 +1843,22 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 contract.Symbol = ibSymbol;
                 contract.Multiplier = _securityProvider.GetSecurity(symbol)?.SymbolProperties.ContractMultiplier.ToString(CultureInfo.InvariantCulture) ?? "100";
                 contract.TradingClass = GetTradingClass(contract, symbol);
+
+                contract.IncludeExpired = includeExpired;
             }
 
             if (symbol.ID.SecurityType == SecurityType.Future)
             {
-                // if Market.USA is specified we automatically find exchange from the prioritized list
-                // Otherwise we convert Market.* markets into IB exchanges if we have them in our map
+                // we convert Market.* markets into IB exchanges if we have them in our map
 
                 contract.Symbol = ibSymbol;
                 contract.LastTradeDateOrContractMonth = symbol.ID.Date.ToStringInvariant(DateFormat.EightCharacter);
 
-                if (symbol.ID.Market == Market.USA)
-                {
-                    contract.Exchange = "";
-                    contract.Exchange = GetFuturesContractExchange(contract, symbol.Value);
-                }
-                else
-                {
-                    contract.Exchange = _futuresExchanges.ContainsKey(symbol.ID.Market) ?
-                                            _futuresExchanges[symbol.ID.Market] :
-                                            symbol.ID.Market;
-                }
+                contract.Exchange = _futuresExchanges.ContainsKey(symbol.ID.Market) ?
+                                        _futuresExchanges[symbol.ID.Market] :
+                                        symbol.ID.Market;
+
+                contract.IncludeExpired = includeExpired;
             }
 
             return contract;
@@ -2223,6 +2205,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             if (securityType == SecurityType.Future)
             {
+                var leanSymbol = _symbolMapper.GetLeanRootSymbol(ibSymbol);
+                var defaultMarket = market;
+                if (!_symbolPropertiesDatabase.TryGetMarket(leanSymbol, securityType, out market))
+                {
+                    market = defaultMarket;
+                }
+
                 var contractDate = DateTime.ParseExact(contract.LastTradeDateOrContractMonth, DateFormat.EightCharacter, CultureInfo.InvariantCulture);
 
                 return _symbolMapper.GetLeanSymbol(ibSymbol, securityType, market, contractDate);
@@ -2266,83 +2255,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private int GetNextTickerId()
         {
             return Interlocked.Increment(ref _nextTickerId);
-        }
-
-        /// <summary>
-        /// This function is used to decide whether or not we should kill an algorithm
-        /// when we lose contact with IB servers. IB performs server resets nightly
-        /// and on Fridays they take everything down, so we'll prevent killing algos
-        /// during the scheduled reset times.
-        /// </summary>
-        private bool IsWithinScheduledServerResetTimes()
-        {
-            // Use schedule based on server region:
-            // https://www.interactivebrokers.com/en/index.php?f=2225
-
-            bool result;
-            var utcTime = DateTime.UtcNow;
-            var time = utcTime.ConvertFromUtc(TimeZones.NewYork);
-            var timeOfDay = time.TimeOfDay;
-
-            // Note: we add 15 minutes *before* and *after* all time ranges for safety margin
-
-            // During the Friday evening reset period, all services will be unavailable in all regions for the duration of the reset.
-            if (time.DayOfWeek == DayOfWeek.Friday && timeOfDay > new TimeSpan(22, 45, 0) ||
-                // Occasionally the disconnection due to the IB reset period might last
-                // much longer than expected during weekends (even up to the cash sync time).
-                time.DayOfWeek == DayOfWeek.Saturday)
-            {
-                // Friday: 23:00 - 03:00 ET for all regions
-                result = true;
-            }
-            else
-            {
-                switch (_ibServerRegion)
-                {
-                    case Region.Europe:
-                        {
-                            // Saturday - Thursday: 05:45 - 06:45 CET
-                            var euTime = utcTime.ConvertFromUtc(TimeZones.Zurich);
-                            var euTimeOfDay = euTime.TimeOfDay;
-                            result = euTimeOfDay > new TimeSpan(5, 30, 0) && euTimeOfDay < new TimeSpan(7, 0, 0);
-                        }
-                        break;
-
-                    case Region.Asia:
-                        {
-                            // Saturday - Thursday: First reset: 16:30 - 17:00 ET
-                            if (timeOfDay > new TimeSpan(16, 15, 0) && timeOfDay < new TimeSpan(17, 15, 0))
-                            {
-                                result = true;
-                            }
-                            else
-                            {
-                                // Saturday - Thursday: Second reset: 20:15 - 21:00 HKT
-                                var hkTime = utcTime.ConvertFromUtc(TimeZones.HongKong);
-                                var hkTimeOfDay = hkTime.TimeOfDay;
-                                result = hkTimeOfDay > new TimeSpan(20, 0, 0) && hkTimeOfDay < new TimeSpan(21, 15, 0);
-                            }
-                        }
-                        break;
-
-                    case Region.America:
-                    default:
-                        {
-                            // Saturday - Thursday: 23:45 - 00:45 ET
-                            result = timeOfDay > new TimeSpan(23, 30, 0) || timeOfDay < new TimeSpan(1, 0, 0);
-                        }
-                        break;
-                }
-            }
-
-            if (result != _isWithinScheduledServerResetTimesLastValue)
-            {
-                _isWithinScheduledServerResetTimesLastValue = result;
-
-                Log.Trace($"InteractiveBrokersBrokerage.IsWithinScheduledServerResetTimes(): {result}");
-            }
-
-            return result;
         }
 
         private void HandleBrokerTime(object sender, IB.CurrentTimeUtcEventArgs e)
@@ -2420,7 +2332,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                                 }
 
                                 var id = GetNextTickerId();
-                                var contract = CreateContract(subscribeSymbol);
+                                var contract = CreateContract(subscribeSymbol, false);
 
                                 _requestInformation[id] = $"Subscribe: {symbol.Value} ({contract})";
 
@@ -2787,10 +2699,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         /// <param name="lookupName">String representing the name to lookup</param>
         /// <param name="securityType">Expected security type of the returned symbols (if any)</param>
+        /// <param name="includeExpired">Include expired contracts</param>
         /// <param name="securityCurrency">Expected security currency(if any)</param>
         /// <param name="securityExchange">Expected security exchange name(if any)</param>
         /// <returns></returns>
-        public IEnumerable<Symbol> LookupSymbols(string lookupName, SecurityType securityType, string securityCurrency = null, string securityExchange = null)
+        public IEnumerable<Symbol> LookupSymbols(string lookupName, SecurityType securityType, bool includeExpired, string securityCurrency = null, string securityExchange = null)
         {
             // setting up exchange defaults and filters
             var exchangeSpecifier = securityType == SecurityType.Future ? securityExchange ?? "" : securityExchange ?? "Smart";
@@ -2803,7 +2716,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 Symbol = _symbolMapper.GetBrokerageRootSymbol(lookupName),
                 Currency = securityCurrency ?? Currencies.USD,
                 Exchange = exchangeSpecifier,
-                SecType = ConvertSecurityType(securityType)
+                SecType = ConvertSecurityType(securityType),
+                IncludeExpired = includeExpired
             };
 
             Log.Trace($"InteractiveBrokersBrokerage.LookupSymbols(): Requesting symbol list for {contract.Symbol} ...");
@@ -2825,7 +2739,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // filtering results
                 var filteredResults =
                     results
-                        .Select(x => x.Summary)
+                        .Select(x => x.Contract)
                         .GroupBy(x => x.Exchange)
                         .OrderByDescending(g => exchangeFilter(g.Key))
                         .FirstOrDefault();
@@ -2837,15 +2751,19 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
 
             // Try to remove options or futures contracts that have expired
-            if (securityType == SecurityType.Option || securityType == SecurityType.Future)
+            if (!includeExpired)
             {
-                var removedSymbols = symbols.Where(x => x.ID.Date < GetRealTimeTickTime(x).Date).ToHashSet();
-
-                if (symbols.RemoveAll(x => removedSymbols.Contains(x)) > 0)
+                if (securityType == SecurityType.Option || securityType == SecurityType.Future)
                 {
-                    Log.Trace("InteractiveBrokersBrokerage.LookupSymbols(): Removed contract(s) for having expiry in the past: {0}", string.Join(",", removedSymbols.Select(x => x.Value)));
+                    var removedSymbols = symbols.Where(x => x.ID.Date < GetRealTimeTickTime(x).Date).ToHashSet();
+
+                    if (symbols.RemoveAll(x => removedSymbols.Contains(x)) > 0)
+                    {
+                        Log.Trace("InteractiveBrokersBrokerage.LookupSymbols(): Removed contract(s) for having expiry in the past: {0}", string.Join(",", removedSymbols.Select(x => x.Value)));
+                    }
                 }
             }
+
             Log.Trace($"InteractiveBrokersBrokerage.LookupSymbols(): Returning {symbols.Count} contract(s) for {contract.Symbol}");
 
             return symbols;
@@ -2861,7 +2779,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             if (securityType == SecurityType.Future)
             {
                 // we need to call the IB API only for futures
-                return !IsWithinScheduledServerResetTimes() && IsConnected;
+                return !_ibAutomater.IsWithinScheduledServerResetTimes() && IsConnected;
             }
 
             return true;
@@ -2883,10 +2801,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 yield break;
             }
 
-            // only trades can be requested (except for FX/CFD)
-            if (request.Symbol.SecurityType != SecurityType.Forex &&
+            // skip invalid security types
+            if (request.Symbol.SecurityType != SecurityType.Equity &&
+                request.Symbol.SecurityType != SecurityType.Forex &&
                 request.Symbol.SecurityType != SecurityType.Cfd &&
-                request.TickType != TickType.Trade)
+                request.Symbol.SecurityType != SecurityType.Future &&
+                request.Symbol.SecurityType != SecurityType.Option)
             {
                 yield break;
             }
@@ -2901,13 +2821,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
 
             // preparing the data for IB request
-            var contract = CreateContract(request.Symbol);
+            var contract = CreateContract(request.Symbol, true);
             var resolution = ConvertResolution(request.Resolution);
             var duration = ConvertResolutionToDuration(request.Resolution);
             var startTime = request.Resolution == Resolution.Daily ? request.StartTimeUtc.Date : request.StartTimeUtc;
             var endTime = request.Resolution == Resolution.Daily ? request.EndTimeUtc.Date : request.EndTimeUtc;
 
-            Log.Trace($"InteractiveBrokersBrokerage::GetHistory(): Submitting request: {request.Symbol.Value} ({contract}): {request.Resolution} {startTime} UTC -> {endTime} UTC");
+            Log.Trace($"InteractiveBrokersBrokerage::GetHistory(): Submitting request: {request.Symbol.Value} ({contract}): {request.Resolution}/{request.TickType} {startTime} UTC -> {endTime} UTC");
 
             DateTimeZone exchangeTimeZone;
             if (!_symbolExchangeTimeZones.TryGetValue(request.Symbol, out exchangeTimeZone))
@@ -2918,9 +2838,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
 
             IEnumerable<BaseData> history;
-            if (request.Symbol.SecurityType == SecurityType.Forex || request.Symbol.SecurityType == SecurityType.Cfd)
+            if (request.TickType == TickType.Quote)
             {
-                // Forex and CFD need two separate IB requests for Bid and Ask,
+                // Quotes need two separate IB requests for Bid and Ask,
                 // each pair of TradeBars will be joined into a single QuoteBar
                 var historyBid = GetHistory(request, contract, startTime, endTime, exchangeTimeZone, duration, resolution, HistoricalDataType.Bid);
                 var historyAsk = GetHistory(request, contract, startTime, endTime, exchangeTimeZone, duration, resolution, HistoricalDataType.Ask);
@@ -3078,7 +2998,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         public override bool ShouldPerformCashSync(DateTime currentTimeUtc)
         {
             return base.ShouldPerformCashSync(currentTimeUtc) &&
-                   !IsWithinScheduledServerResetTimes();
+                   !_ibAutomater.IsWithinScheduledServerResetTimes();
         }
 
         private void CheckRateLimiting()
@@ -3109,7 +3029,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         {
             Log.Trace($"InteractiveBrokersBrokerage.OnIbAutomaterExited(): Exit code: {e.ExitCode}");
 
-            // check if IBGateway was closed because of an existing session
+            // check if IBGateway was closed because of an IBAutomater error
             CheckIbAutomaterError(_ibAutomater.GetLastStartResult(), false);
         }
 
@@ -3123,45 +3043,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 {
                     throw new Exception($"InteractiveBrokersBrokerage.CheckIbAutomaterError(): {result.ErrorCode} - {result.ErrorMessage}");
                 }
-            }
-        }
-
-        private void LoadIbServerInformation()
-        {
-            // After a successful login, IBGateway saves the connected/redirected host name to the Peer key in the jts.ini file.
-            var iniFileName = Path.Combine(_ibDirectory, "jts.ini");
-
-            // Note: Attempting to connect to a different server via jts.ini will not change anything.
-            // IB will route you back to the server they have set for you on their server side.
-            // You need to request a server change and only then will your system connect to the changed server address.
-
-            if (File.Exists(iniFileName))
-            {
-                const string key = "Peer=";
-                foreach (var line in File.ReadLines(iniFileName))
-                {
-                    if (line.StartsWith(key))
-                    {
-                        var value = line.Substring(key.Length);
-                        _ibServerName = value.Substring(0, value.IndexOf(':'));
-
-                        if (!_ibServerMap.TryGetValue(_ibServerName, out _ibServerRegion))
-                        {
-                            _ibServerRegion = Region.America;
-                            Log.Error($"InteractiveBrokersBrokerage.LoadIbServerInformation(): Unknown server name: {_ibServerName}, region set to {_ibServerRegion}");
-                        }
-
-                        // known server name and region
-                        return;
-                    }
-                }
-
-                _ibServerRegion = Region.America;
-                Log.Error($"InteractiveBrokersBrokerage.LoadIbServerInformation(): Unable to find the server name in the IB ini file: {iniFileName}, region set to {_ibServerRegion}");
-            }
-            else
-            {
-                Log.Error($"InteractiveBrokersBrokerage.LoadIbServerInformation(): IB ini file not found: {iniFileName}");
             }
         }
 
@@ -3204,4 +3085,5 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             105, 106, 107, 109, 110, 111, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 129, 131, 132, 133, 134, 135, 136, 137, 140, 141, 146, 147, 148, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 163, 167, 168, 201, 313,314,315,325,328,329,334,335,336,337,338,339,340,341,342,343,345,347,348,349,350,352,353,355,356,358,359,360,361,362,363,364,367,368,369,370,371,372,373,374,375,376,377,378,379,380,382,383,387,388,389,390,391,392,393,394,395,396,397,398,400,401,402,403,405,406,407,408,409,410,411,412,413,417,418,419,421,423,424,427,428,429,433,434,435,436,437,439,440,441,442,443,444,445,446,447,448,449,10002,10006,10007,10008,10009,10010,10011,10012,10014,10020,2102
         };
     }
+
 }

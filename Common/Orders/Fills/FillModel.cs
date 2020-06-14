@@ -122,7 +122,7 @@ namespace QuantConnect.Orders.Fills
             // if the order is filled on stale (fill-forward) data, set a warning message on the order event
             if (pricesEndTimeUtc.Add(Parameters.StalePriceTimeSpan) < order.Time)
             {
-                fill.Message = $"Warning: fill at stale price ({prices.EndTime} {asset.Exchange.TimeZone})";
+                fill.Message = $"Warning: fill at stale price ({prices.EndTime.ToStringInvariant()} {asset.Exchange.TimeZone})";
             }
 
             //Order [fill]price for a market order model is the current security price
@@ -260,10 +260,10 @@ namespace QuantConnect.Orders.Fills
 
                         // Fill the limit order, using closing price of bar:
                         // Note > Can't use minimum price, because no way to be sure minimum wasn't before the stop triggered.
-                        if (asset.Price < order.LimitPrice)
+                        if (prices.Current < order.LimitPrice)
                         {
                             fill.Status = OrderStatus.Filled;
-                            fill.FillPrice = Math.Min(prices.High, order.LimitPrice);;
+                            fill.FillPrice = Math.Min(prices.High, order.LimitPrice);
                             // assume the order completely filled
                             fill.FillQuantity = order.Quantity;
                         }
@@ -278,7 +278,7 @@ namespace QuantConnect.Orders.Fills
 
                         // Fill the limit order, using minimum price of the bar
                         // Note > Can't use minimum price, because no way to be sure minimum wasn't before the stop triggered.
-                        if (asset.Price > order.LimitPrice)
+                        if (prices.Current > order.LimitPrice)
                         {
                             fill.Status = OrderStatus.Filled;
                             fill.FillPrice = Math.Max(prices.Low, order.LimitPrice);

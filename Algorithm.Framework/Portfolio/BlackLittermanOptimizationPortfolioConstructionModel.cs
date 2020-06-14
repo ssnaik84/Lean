@@ -161,7 +161,7 @@ namespace QuantConnect.Algorithm.Framework.Portfolio
         /// <summary>
         /// Initialize the model
         /// </summary>
-        /// <param name="rebalancingParam">Rebalancing func or if a date rule, timedelta will be converted into func.
+        /// <param name="rebalance">Rebalancing func or if a date rule, timedelta will be converted into func.
         /// For a given algorithm UTC DateTime the func returns the next expected rebalance time
         /// or null if unknown, in which case the function will be called again in the next loop. Returning current time
         /// will trigger rebalance. If null will be ignored</param>
@@ -176,7 +176,7 @@ namespace QuantConnect.Algorithm.Framework.Portfolio
         /// <remarks>This is required since python net can not convert python methods into func nor resolve the correct
         /// constructor for the date rules parameter.
         /// For performance we prefer python algorithms using the C# implementation</remarks>
-        public BlackLittermanOptimizationPortfolioConstructionModel(PyObject rebalancingParam,
+        public BlackLittermanOptimizationPortfolioConstructionModel(PyObject rebalance,
             PortfolioBias portfolioBias = PortfolioBias.LongShort,
             int lookback = 1,
             int period = 63,
@@ -187,7 +187,7 @@ namespace QuantConnect.Algorithm.Framework.Portfolio
             IPortfolioOptimizer optimizer = null)
             : this((Func<DateTime, DateTime?>)null, portfolioBias, lookback, period, resolution, riskFreeRate, delta, tau, optimizer)
         {
-            SetRebalancingFunc(rebalancingParam);
+            SetRebalancingFunc(rebalance);
         }
 
         /// <summary>
@@ -264,7 +264,7 @@ namespace QuantConnect.Algorithm.Framework.Portfolio
                             Algorithm.SetRunTimeError(new ArgumentNullException("BlackLittermanOptimizationPortfolioConstructionModel does not accept \'null\' as Insight.Magnitude. Please make sure your Alpha Model is generating Insights with the Magnitude property set."));
                             return targets;
                         }
-                        symbolData.Add(Algorithm.Time, insight.Magnitude.Value.SafeDecimalCast());
+                        symbolData.Add(insight.GeneratedTimeUtc, insight.Magnitude.Value.SafeDecimalCast());
                     }
                 }
                 // Get symbols' returns
@@ -334,8 +334,8 @@ namespace QuantConnect.Algorithm.Framework.Portfolio
             }
 
             // initialize data for added securities
-            var addedSymbols = changes.AddedSecurities.Select(x => x.Symbol).ToList();
-            algorithm.History(addedSymbols, _lookback * _period, _resolution)
+            var addedSymbols = changes.AddedSecurities.ToDictionary(x => x.Symbol, x => x.Exchange.TimeZone);
+            algorithm.History(addedSymbols.Keys, _lookback * _period, _resolution)
                 .PushThrough(bar =>
                 {
                     ReturnsSymbolData symbolData;
@@ -344,7 +344,9 @@ namespace QuantConnect.Algorithm.Framework.Portfolio
                         symbolData = new ReturnsSymbolData(bar.Symbol, _lookback, _period);
                         _symbolDataDict.Add(bar.Symbol, symbolData);
                     }
-                    symbolData.Update(bar.EndTime, bar.Value);
+                    // Convert the data timestamp to UTC
+                    var utcTime = bar.EndTime.ConvertToUtc(addedSymbols[bar.Symbol]);
+                    symbolData.Update(utcTime, bar.Value);
                 });
         }
 
