@@ -14,7 +14,7 @@ namespace Stocky.Data
     {
         public static async Task DownloadAsync()
         {
-            var symbols = DbHelper.GetUsaStockSymbols();
+            var symbols =  DbHelper.GetUsaStockSymbols();
 
             // You could query multiple symbols with multiple fields through the following steps:
             //var securities = await Yahoo.Symbols("AAPL", "GOOG").Fields(Field.Symbol, Field.RegularMarketPrice, Field.FiftyTwoWeekHigh).QueryAsync();
@@ -44,6 +44,7 @@ namespace Stocky.Data
         public static async Task DownloadEodAsync()
         {
             var symbols = DbHelper.GetUsaStockSymbols();
+            symbols.Add("%5ENDX"); //nsdaq 100 index, that is, _ndx
             Yahoo.IgnoreEmptyRows = true;
             var batchSize = 100;
             var totalSymbolCount = symbols.Count();
@@ -51,6 +52,9 @@ namespace Stocky.Data
             var startDate = DateTime.Now.AddDays(-15); //will download upto 15 days old data
             var latestDbDate = DbHelper.GetLatestEodDate() ?? DateTime.Now.AddDays(-100);
             startDate = (latestDbDate > startDate) ? latestDbDate.AddDays(1) : startDate;
+
+            //var isValid = DateTime.TryParse("2019-06-18 00:00:00.000", out startDate);
+
 
             foreach(var symbol in symbols)
             {

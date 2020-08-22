@@ -8,7 +8,64 @@ then, resolve conflicts, if exists.
 git push
 ===================================================
 
+use [StockScreener]
+--select  min(datetime), max(datetime) from usastockeod
 
+declare @last_trading_date datetime, @prev_trading_date datetime, @from_date datetime
+select  @last_trading_date = max(datetime) FROM usastockeod  
+SELECT @prev_trading_date = MAX( datetime ) FROM usastockeod WHERE datetime < ( SELECT MAX( datetime ) FROM usastockeod ) 
+SELECT TOP(1) @from_date = datetime FROM (SELECT DISTINCT TOP(50) datetime FROM usastockeod ORDER BY datetime DESC) A ORDER BY datetime
+
+select @from_date as fromdate, @prev_trading_date as prevdate , @last_trading_date as lastdate
+
+--@downtrend_stock
+declare @downtrend_stock TABLE 
+(
+	symbol nvarchar(10) NULL,
+	[open] decimal(18,2),
+	[close] decimal(18,2),
+	pricevol decimal(18,2)
+)
+insert into @downtrend_stock
+select e1.Symbol, e1.[Open], e1.[Close], e1.[Close] * e1.Volume from usastockeod e1
+join usastockeod e2 on e1.Symbol = e2.Symbol
+where e1.[DateTime] = @last_trading_date
+and e1.[DateTime] = @last_trading_date and e2.[DateTime] = @prev_trading_date
+and e1.[Close] < e1.[Open]
+--and e1.[Close] between 1 and 200
+order by e1.[Close] * e1.Volume desc
+
+--@uptrend_stock
+declare @uptrend_stock TABLE 
+(
+	symbol nvarchar(10) NULL,
+	[open] decimal(18,2),
+	[close] decimal(18,2),
+	pricevol decimal(18,2)
+)
+insert into @uptrend_stock
+select top 200 e1.Symbol, e1.[Open], e1.[Close], e1.[Close] * e1.Volume from usastockeod e1
+join usastockeod e2 on e1.Symbol = e2.Symbol
+where e1.[DateTime] = @last_trading_date
+and e1.[DateTime] = @last_trading_date and e2.[DateTime] = @prev_trading_date
+and e1.[Close] > e1.[Open]
+--and e1.[Close] between 1 and 200
+order by e1.[Close] * e1.Volume desc
+
+--select * from @downtrend_stock
+--select * from @uptrend_stock
+
+select * from @downtrend_stock d
+where d.[close] < (select MIN(e.[close]) from usastockeod e where e.Symbol = d.symbol and e.[DateTime] between @from_date and @prev_trading_date)
+order by d.pricevol desc
+
+select * from @uptrend_stock u
+where u.[close] > (select MAX(e.[close]) from usastockeod e where e.Symbol = u.symbol and e.[DateTime] between @from_date and @prev_trading_date)
+order by u.pricevol desc
+
+
+
+======================================================================
 
 
 CREATE TABLE [dbo].[usastockeod](
