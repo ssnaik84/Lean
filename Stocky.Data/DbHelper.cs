@@ -12,10 +12,10 @@ namespace Stocky.Data
 {
     class DbHelper
     {  
-        public static List<string> GetUsaStockSymbols()
+        public static List<string> GetUsaStockSymbols(string selectQuery)
         {
             List<string> symbols = new List<string>();
-            string queryString = "select symbol from UsaStock";
+            string queryString = selectQuery; // "select symbol from UsaStock";
             using (SqlConnection connection = new SqlConnection(Constants.DatabaseConnectionString))
             using (SqlCommand command = connection.CreateCommand())
             {
@@ -49,6 +49,33 @@ namespace Stocky.Data
                 catch (Exception ex) { }
 
                 return maxDate;
+            }
+        }
+
+        public static void SaveToDatabase(List<OptionModelRecord> dbRecords)
+        {
+            using (IDbConnection db = new SqlConnection(Constants.DatabaseConnectionString))
+            {
+                foreach (var dbRecord in dbRecords)
+                {
+                    string insertQuery = $"INSERT INTO [dbo].[usaoption] ([symbol] ,[exchange] ,[lastTradeDate] ,[lastTradePrice] " +
+                        $",[contractName] ,[contractSize] ,[currency] ,[type] ,[inTheMoney] ,[lastTradeDateTime] ,[expirationDate] " +
+                        $",[strike] ,[lastPrice] ,[bid] ,[ask] ,[change] ,[changePercent] ,[volume] ,[openInterest] ,[impliedVolatility] " +
+                        $",[delta] ,[gamma] ,[theta] ,[vega] ,[rho] ,[theoretical] ,[intrinsicValue] ,[timeValue] ,[updatedAt] ,[daysBeforeExpiration]) " +
+                        $" VALUES ('{dbRecord.symbol}' ,'{dbRecord.exchange}' ,'{dbRecord.lastTradeDate}' ,'{dbRecord.lastTradePrice}' " +
+                        $",'{dbRecord.contractName}' ,'{dbRecord.contractSize}' ,'{dbRecord.currency}' ,'{dbRecord.type}' " +
+                        $",'{dbRecord.inTheMoney}' ,'{dbRecord.lastTradeDateTime}' ,'{dbRecord.expirationDate}' ,'{dbRecord.strike}' " +
+                        $",'{dbRecord.lastPrice}' ,'{dbRecord.bid}' ,'{dbRecord.ask}' ,'{dbRecord.change}' ,'{dbRecord.changePercent}' " +
+                        $",'{dbRecord.volume}' ,'{dbRecord.openInterest}' ,'{dbRecord.impliedVolatility}' ,'{dbRecord.delta}' " +
+                        $",'{dbRecord.gamma}' ,'{dbRecord.theta}' ,'{dbRecord.vega}' ,'{dbRecord.rho}' ,'{dbRecord.theoretical}' " +
+                        $",'{dbRecord.intrinsicValue}' ,'{dbRecord.timeValue}' ,'{dbRecord.updatedAt}' ,'{dbRecord.daysBeforeExpiration}')";
+
+                    try
+                    {
+                        db.Execute(insertQuery);
+                    }
+                    catch (Exception ex) { }
+                }
             }
         }
 

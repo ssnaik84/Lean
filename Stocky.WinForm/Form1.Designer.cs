@@ -33,6 +33,7 @@
             this.btnShowChart = new System.Windows.Forms.Button();
             this.btnSaveEODData = new System.Windows.Forms.Button();
             this.btnReadTweets = new System.Windows.Forms.Button();
+            this.button1 = new System.Windows.Forms.Button();
             this.SuspendLayout();
             // 
             // btnSaveHistoricalData
@@ -83,11 +84,22 @@
             this.btnReadTweets.UseVisualStyleBackColor = true;
             this.btnReadTweets.Click += new System.EventHandler(this.btnReadTweets_Click);
             // 
+            // button1
+            // 
+            this.button1.Location = new System.Drawing.Point(262, 334);
+            this.button1.Name = "button1";
+            this.button1.Size = new System.Drawing.Size(172, 44);
+            this.button1.TabIndex = 5;
+            this.button1.Text = "Save Options Data";
+            this.button1.UseVisualStyleBackColor = true;
+            this.button1.Click += new System.EventHandler(this.button1_Click);
+            // 
             // Form1
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(8F, 16F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.ClientSize = new System.Drawing.Size(800, 450);
+            this.Controls.Add(this.button1);
             this.Controls.Add(this.btnReadTweets);
             this.Controls.Add(this.btnSaveEODData);
             this.Controls.Add(this.btnShowChart);
@@ -107,6 +119,7 @@
         private System.Windows.Forms.Button btnShowChart;
         private System.Windows.Forms.Button btnSaveEODData;
         private System.Windows.Forms.Button btnReadTweets;
+        private System.Windows.Forms.Button button1;
     }
 }
 

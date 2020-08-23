@@ -8,6 +8,33 @@ then, resolve conflicts, if exists.
 git push
 ===================================================
 
+-- GET OPTION DATA
+;WITH cte AS
+(
+   SELECT *,
+         ROW_NUMBER() OVER (PARTITION BY strike ORDER BY lastprice asc) AS rn
+   FROM usaoption
+   where inTheMoney = 1
+	and lastTradeDateTime > '2020-08-21'
+	and [type] = 'CALL'
+)
+SELECT symbol, lastPrice, volume, openInterest, impliedVolatility, expirationDate
+FROM cte
+WHERE rn = 1 --and volume > 100
+--and expirationDate = '2020-08-28'
+and symbol = 'HRB'
+--and lastPrice < 1
+--order by lastPrice asc
+--order by openInterest desc
+--order by lastPrice * volume desc
+order by lastPrice asc
+
+
+SELECT count(DISTINCT symbol) from usasecurity (nolock) -- 2691
+select count(distinct symbol) from usaoption (nolock) -- 1378
+select count(*) from usaoption (nolock) -- 80505
+
+========================================================================
 use [StockScreener]
 --select  min(datetime), max(datetime) from usastockeod
 
