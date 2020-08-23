@@ -7,6 +7,139 @@ git pull upstream master
 then, resolve conflicts, if exists.
 git push
 ===================================================
+USE [StockScreener]
+GO
+/****** Object:  UserDefinedFunction [dbo].[getUpStocks]    Script Date: 8/23/2020 6:10:44 PM ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+--use stockscreener
+ALTER FUNCTION [dbo].[getUpStocks]()
+RETURNS  @rtnTable TABLE 
+(
+    -- columns returned by the function    
+    symbol nvarchar(10) NULL
+)
+AS
+BEGIN
+
+declare @date1 datetime = '2020-08-21',
+@date2 datetime = '2020-08-20',
+@date3 datetime = '2020-08-19'
+
+declare @resultTable TABLE 
+(
+    -- columns returned by the function    
+    symbol nvarchar(10) NULL
+)
+
+insert into @resultTable (symbol)
+select e1.Symbol from usastockeod e1
+join usastockeod e2 on e1.Symbol = e2.Symbol
+join usastockeod e3 on e1.Symbol = e3.Symbol
+where e1.[DateTime] = @date1 and e2.[DateTime] = @date2 and e3.[DateTime] = @date3
+and 
+(
+(e1.[Close] > e1.[Open] and e2.[Close] > e2.[Open] and e3.[Close] > e3.[Open]) OR 
+(e1.[Close] > e1.[Open] and e2.[Close] > e2.[Open] and e3.[Close] < e3.[Open]) OR 
+(e1.[Close] > e1.[Open] and e2.[Close] < e2.[Open] and e3.[Close] < e3.[Open])
+)
+
+
+;WITH cte AS
+(
+   SELECT *,
+         ROW_NUMBER() OVER (PARTITION BY strike ORDER BY lastprice asc) AS rn
+   FROM usaoption
+   where inTheMoney = 1
+	and lastTradeDateTime > @date1
+	and [type] = 'CALL'
+)
+insert into @rtnTable
+SELECT symbol -- symbol, lastPrice, volume, openInterest, impliedVolatility, expirationDate, *
+FROM cte
+WHERE rn = 1 --and volume > 100
+--and expirationDate = '2020-08-28'
+and symbol in (select distinct symbol from @resultTable)
+--in ('AGNC','CTXS','EBAY','FOXA','INTU','PCH','TSLA','YNDX','AAPL','AMD','ASML','ATSG','AVGO','BIDU','CHTR','CTAS','DBX','DGLY','ERIC','EXPE','FIVE','GOOG','HDS','IDCC','IDXX','IQ','LOGI','MAR','NTES','SIRI','SVMK','WDAY','HAIN','MRCY','MRVL','VRSK','WMGI')
+and lastPrice < 2.2
+AND impliedVolatility > 30
+--order by lastPrice asc
+--order by openInterest desc
+--order by lastPrice * volume desc
+order by impliedVolatility ASC
+
+return
+END
+==============================================================
+USE [StockScreener]
+GO
+/****** Object:  UserDefinedFunction [dbo].[getUpStocks]    Script Date: 8/23/2020 6:10:44 PM ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+--use stockscreener
+ALTER FUNCTION [dbo].[getDownStocks]()
+RETURNS  @rtnTable TABLE 
+(
+    -- columns returned by the function    
+    symbol nvarchar(10) NULL
+)
+AS
+BEGIN
+
+declare @date1 datetime = '2020-08-21',
+@date2 datetime = '2020-08-20',
+@date3 datetime = '2020-08-19'
+
+declare @resultTable TABLE 
+(
+    -- columns returned by the function    
+    symbol nvarchar(10) NULL
+)
+
+insert into @resultTable (symbol)
+select e1.Symbol from usastockeod e1
+join usastockeod e2 on e1.Symbol = e2.Symbol
+join usastockeod e3 on e1.Symbol = e3.Symbol
+where e1.[DateTime] = @date1 and e2.[DateTime] = @date2 and e3.[DateTime] = @date3
+and 
+(
+(e1.[Close] < e1.[Open] and e2.[Close] < e2.[Open] and e3.[Close] < e3.[Open]) OR 
+(e1.[Close] < e1.[Open] and e2.[Close] < e2.[Open] and e3.[Close] > e3.[Open]) OR 
+(e1.[Close] < e1.[Open] and e2.[Close] > e2.[Open] and e3.[Close] > e3.[Open])
+)
+
+
+;WITH cte AS
+(
+   SELECT *,
+         ROW_NUMBER() OVER (PARTITION BY strike ORDER BY lastprice asc) AS rn
+   FROM usaoption
+   where inTheMoney = 1
+	and lastTradeDateTime > @date1
+	and [type] = 'PUT'
+)
+insert into @rtnTable
+SELECT symbol -- symbol, lastPrice, volume, openInterest, impliedVolatility, expirationDate, *
+FROM cte
+WHERE rn = 1 --and volume > 100
+--and expirationDate = '2020-08-28'
+and symbol in (select distinct symbol from @resultTable)
+--in ('AGNC','CTXS','EBAY','FOXA','INTU','PCH','TSLA','YNDX','AAPL','AMD','ASML','ATSG','AVGO','BIDU','CHTR','CTAS','DBX','DGLY','ERIC','EXPE','FIVE','GOOG','HDS','IDCC','IDXX','IQ','LOGI','MAR','NTES','SIRI','SVMK','WDAY','HAIN','MRCY','MRVL','VRSK','WMGI')
+and lastPrice < 2.2
+AND impliedVolatility > 30
+--order by lastPrice asc
+--order by openInterest desc
+--order by lastPrice * volume desc
+order by impliedVolatility ASC
+
+return
+END
+
+===========================================================================
 
 -- GET OPTION DATA
 ;WITH cte AS
